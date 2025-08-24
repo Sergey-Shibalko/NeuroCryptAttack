@@ -1,0 +1,121 @@
+import numpy as np
+from os import urandom
+
+class Speck32_64(object):
+    def __init__(self, key, num_rounds):  # инициализация класса, вычисляем массив ключей,
+        self.key = key  # используемых для шифрования и дешифрования
+        self.num_rounds=num_rounds
+        l_schedule = [(key >> (x * 16)) % (1 << 16) for x in
+                      range(1, 4)]
+        self.key_schedule = []
+        k2 = self.key % (1 << 16)
+        self.key_schedule.append(k2)
+        for i in range(self.num_rounds - 1):
+            k1, k2 = self.encrypt_round(l_schedule[i], k2, i)
+            l_schedule.append(k1)
+            self.key_schedule.append(k2)
+
+    def make_key_schedule(self, key):
+        l_schedule = [(key >> (x * 16)) % (1 << 16) for x in
+                      range(1, 4)]
+        key_schedule = []
+        k2 = key % (1 << 16)
+        key_schedule.append(k2)
+        for i in range(self.num_rounds - 1):
+            k1, k2 = self.encrypt_round(l_schedule[i], k2, i)
+            l_schedule.append(k1)
+            key_schedule.append(k2)
+        return key_schedule
+
+
+    def encrypt_round(self, x, y, k):  # один раунд шифрования
+        # Циклический сдвиг первого слова вправо на 7 бит;
+        # Сложение второго слова с первым по модулю 2 в степени длины слова;
+        # Операция XOR ключа и результата сложения;
+        # Циклический сдвиг второго слова влево на 2 бита;
+        # Операция XOR второго слова и результата предыдущего XOR.
+        x = self.ROR(x, 7)
+        x = (x + y) % (1 << 16)
+        x = x ^ k
+        y = self.ROL(y, 2)
+        y = y ^ x
+        return [x, y]
+
+    def ROL(self, x, a):  # Циклический сдвиг вправо на 7 бит
+        return ((x << a) + (x >> 16 - a)) % (1 << 16)
+
+    def ROR(self, x, a):  # Циклический сдвиг влево на 2 бита;
+        return ((x >> a) + (x << 16 - a)) % (1 << 16)
+
+    def encrypt(self, plaintext,key_sc=[]):  # алгоритм шифрования
+        # разбиваем слово на 2
+        # повторяем раунд шифрования 22 раза
+        if len(key_sc)==0:
+            key_sc=self.key_schedule
+        l = plaintext >> 16
+        r = plaintext % (1 << 16)
+        for i in key_sc:
+            l, r = self.encrypt_round(l, r, i)
+        return (l << 16) + r
+
+    def decrypt(self, ciphertxt):  # алгоритм дешифрования
+        # разбиваем слово на 2
+        # повторяем раунд дешифрования 22 раза
+        # используем ключи с конца
+        l = ciphertxt >> 16
+        r = ciphertxt % (1 << 16)
+        for i in reversed(self.key_schedule):
+            l, r = self.decrypt_round(l, r, i)
+        return (l << 16) + r
+
+    def decrypt_round(self, x, y, k):  # один раунд шифрования
+        # Операция XOR второго и первого слова.
+        # Циклический сдвиг второго слова вправо на 2 бита;
+        # Операция XOR ключа и первого слова;
+        # Разность первого слова со вторым по модулю 2 в степени длины слова;
+        # Циклический сдвиг первого слова влево на 7 бит;
+        y = y ^ x
+        y = self.ROR(y, 2)
+        x = x ^ k
+        x = (x - y) % (1 << 16)
+        x = self.ROL(x, 7)
+        return [x, y]
+
+    def convert_to_binary(self,arr):
+        X = np.zeros((2 * 32, len(arr[0])), dtype=np.uint8)
+        for i in range(2 * 32):
+            index = i // 32
+            offset = 32 - (i % 32) - 1
+            X[i] = (arr[index] >> offset) & 1
+        X = X.transpose()
+        return (X)
+
+    def make_data(self,data_len: int,diff=0x00400000):
+        Y = np.frombuffer(urandom(data_len), dtype=np.uint8)
+        Y = Y & 1
+        plaintext0=np.frombuffer(urandom(4*data_len), dtype=np.uint32)
+        plaintext1=plaintext0^diff
+        num_rand_samples = np.sum(Y == 0)
+        plaintext1[Y==0]=np.frombuffer(urandom(4*num_rand_samples), dtype=np.uint32)
+        keys=np.frombuffer(urandom(8*data_len), dtype=np.uint64)
+        key_sc=self.make_key_schedule(keys)
+        cyphertxt0=self.encrypt(plaintext0,key_sc)
+        #cyphertxt0=cyphertxt0.astype(np.uint32)
+        cyphertxt1=self.encrypt(plaintext1,key_sc)
+        #cyphertxt1=cyphertxt1.astype(np.uint32)
+        X=self.convert_to_binary([cyphertxt0,cyphertxt1])
+        #X = np.array(X, dtype=np.float32)
+        #X = X.transpose((1, 2, 0))
+        return X,Y
+
+
+
+
+
+
+
+
+
+
+
+
